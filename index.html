@@ -68,24 +68,58 @@
   .camwrap{position:relative;border-radius:var(--radius);overflow:hidden;background:#000;aspect-ratio:4/3;max-height:420px;}
   .camwrap video{width:100%;height:100%;object-fit:cover;display:block;}
   .camwrap .camOverlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;background:rgba(0,0,0,.5);font-weight:700;text-align:center;padding:14px;}
-  .cardsheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;}
-  .plkcard{border:2px dashed #999;border-radius:14px;padding:10px;text-align:center;background:#fff;color:#222;}
-  .plkcard .name{font-weight:800;font-size:16px;margin:6px 0 0;}
-  .plkcard .qrbox{position:relative;width:140px;height:140px;margin:10px auto 24px;background:#fff;}
-  .plkcard .qrbox canvas{width:140px!important;height:140px!important;display:block;}
+  /* Khổ giấy in: A4 — mọi kích thước trang/thẻ bên dưới dùng đơn vị mm nên trên MÀN HÌNH đã
+     hiển thị đúng tỉ lệ thật như khi in ra A4, không chỉ to hơn tuỳ hứng. */
+  @page{ size:A4; margin:8mm; }
+  .cardsheetWrap{overflow-x:auto;}
+  .cardsheet{display:flex;flex-direction:column;align-items:center;gap:10mm;}
+  .printpage{box-sizing:border-box;width:194mm;min-height:281mm;background:#fff;display:grid;gap:4mm;box-shadow:0 0 0 1px #eee;}
+  .pagelabel{text-align:center;color:#aaa;font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:-6mm;}
+  .plkcard{box-sizing:border-box;border:2px dashed #999;border-radius:3mm;padding:4mm;text-align:center;background:#fff;color:#222;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;}
+  .plkcard .name{font-weight:800;margin:2mm 0 0;}
+  .plkcard .qrbox{position:relative;margin:4mm auto 6mm;background:#fff;}
+  .plkcard .qrbox canvas{display:block;}
   .plkcard .qrerr{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--bad);font-weight:800;font-size:12px;text-align:center;border:2px solid var(--bad);}
-  .plkcard .lab{position:absolute;font-weight:800;font-size:13px;color:#555;white-space:nowrap;}
-  .plkcard .lab-A{top:-16px;left:50%;transform:translateX(-50%);color:var(--A);}
-  .plkcard .lab-B{right:-18px;top:50%;transform:translateY(-50%);color:var(--B);}
-  .plkcard .lab-C{bottom:-16px;left:50%;transform:translateX(-50%);color:#b8960a;}
-  .plkcard .lab-D{left:-18px;top:50%;transform:translateY(-50%);color:var(--D);}
-  .plkcard .hint{font-size:10px;color:#999;margin-top:4px;}
+  .plkcard .lab{position:absolute;font-weight:800;white-space:nowrap;}
+  .plkcard .lab-A{top:-5mm;left:50%;transform:translateX(-50%);color:var(--A);}
+  .plkcard .lab-B{right:-6mm;top:50%;transform:translateY(-50%);color:var(--B);}
+  .plkcard .lab-C{bottom:-5mm;left:50%;transform:translateX(-50%);color:#b8960a;}
+  .plkcard .lab-D{left:-6mm;top:50%;transform:translateY(-50%);color:var(--D);}
+  .plkcard .hint{color:#999;margin-top:2mm;}
+  /* Khung in: 1 / 2 / 4 thẻ mỗi trang — mỗi khung chia đúng khổ A4 (194×281mm vùng in, lề 8mm),
+     QR to & đậm hơn hẳn khi càng ít thẻ/trang, luôn vừa khít trang giấy, không tràn/lệch. */
+  .cardsheet[data-layout="1"] .printpage{grid-template-columns:1fr;place-items:center;}
+  .cardsheet[data-layout="1"] .plkcard{width:180mm;height:270mm;}
+  .cardsheet[data-layout="1"] .plkcard .qrbox{width:150mm;height:150mm;}
+  .cardsheet[data-layout="1"] .plkcard .qrbox canvas{width:150mm!important;height:150mm!important;}
+  .cardsheet[data-layout="1"] .plkcard .name{font-size:10mm;}
+  .cardsheet[data-layout="1"] .plkcard .hint{font-size:4mm;}
+  .cardsheet[data-layout="1"] .plkcard .lab{font-size:6mm;}
+  .cardsheet[data-layout="2"] .printpage{grid-template-columns:1fr;grid-template-rows:1fr 1fr;place-items:center;}
+  .cardsheet[data-layout="2"] .plkcard{width:170mm;height:137mm;}
+  .cardsheet[data-layout="2"] .plkcard .qrbox{width:105mm;height:105mm;}
+  .cardsheet[data-layout="2"] .plkcard .qrbox canvas{width:105mm!important;height:105mm!important;}
+  .cardsheet[data-layout="2"] .plkcard .name{font-size:7mm;}
+  .cardsheet[data-layout="2"] .plkcard .hint{font-size:3.2mm;}
+  .cardsheet[data-layout="2"] .plkcard .lab{font-size:4.5mm;}
+  .cardsheet[data-layout="4"] .printpage{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;place-items:center;}
+  .cardsheet[data-layout="4"] .plkcard{width:94mm;height:137mm;}
+  .cardsheet[data-layout="4"] .plkcard .qrbox{width:72mm;height:72mm;}
+  .cardsheet[data-layout="4"] .plkcard .qrbox canvas{width:72mm!important;height:72mm!important;}
+  .cardsheet[data-layout="4"] .plkcard .name{font-size:5mm;}
+  .cardsheet[data-layout="4"] .plkcard .hint{font-size:2.6mm;}
+  .cardsheet[data-layout="4"] .plkcard .lab{font-size:3.6mm;}
   @media print{
     body{background:#fff!important;}
     header.top, .byline, nav.tabs, .classbar, .no-print{display:none!important;}
     .app{max-width:none;padding:0;}
     .card{box-shadow:none;}
     .plkcard{page-break-inside:avoid;}
+    .cardsheetWrap{overflow:visible;}
+    .cardsheet{gap:0;}
+    .printpage{page-break-after:always;box-shadow:none;width:auto;min-height:0;}
+    .printpage:last-child{page-break-after:auto;}
+    .pagelabel{display:none;}
   }
   .flexcenter{display:flex;align-items:center;justify-content:center;}
   .small{font-size:12px;}
@@ -236,6 +270,7 @@ const BUILTIN_SYNC_URL = 'https://script.google.com/macros/s/AKfycbx4fHxSfbqg4Ob
 
 const DEFAULT_STATE = {
   cardCount: 45,
+  cardLayout: '4', // số thẻ QR mỗi trang khi in: '1' | '2' | '4'
   classes: [], // {id, name, roster: {cardId(string): studentName}, history: [...]}
   activeClassId: null,
   nextClassId: 1,
@@ -575,23 +610,53 @@ afterRender.classes = ()=>{
 };
 
 /* ===================== CARDS (PRINT) — generic, reusable ===================== */
-view_render.cards = ()=>`
+// qrPx chọn theo kích thước thật (mm) của mỗi khung in — đủ phân giải để in sắc nét và camera quét xa vẫn nhận tốt.
+const CARD_LAYOUTS = {
+  '1': {perPage:1, qrPx:900, label:'1 thẻ / trang'},
+  '2': {perPage:2, qrPx:700, label:'2 thẻ / trang'},
+  '4': {perPage:4, qrPx:500, label:'4 thẻ / trang'}
+};
+view_render.cards = ()=>{
+  const layout = CARD_LAYOUTS[state.cardLayout] ? state.cardLayout : '4';
+  return `
   <div class="card no-print">
     <h2>In thẻ QR dùng chung cho mọi lớp</h2>
     <p class="muted">Những thẻ này <b>không gắn tên học sinh</b> — chỉ có số thứ tự. In một lần, ép plastic, dùng lại mãi cho tất cả các lớp (chỉ cần đổi gán tên trong mục "Danh sách lớp").</p>
-    <div class="row">
-      <label class="inline">Số lượng thẻ: <input id="cardCountInput" type="number" min="1" max="200" value="${state.cardCount}" style="width:90px;"></label>
+    <div class="row" style="align-items:center;">
+      <label class="inline">Số lượng thẻ:</label>
+      <button class="btn-ghost btn-sm" id="cardCountMinusBtn">－</button>
+      <input id="cardCountInput" type="number" min="1" max="200" value="${state.cardCount}" style="width:70px;text-align:center;">
+      <button class="btn-ghost btn-sm" id="cardCountPlusBtn">＋</button>
       <button class="btn-ghost" id="updateCountBtn">Cập nhật</button>
+    </div>
+    <div class="row" style="margin-top:10px;align-items:center;">
+      <label class="inline" style="margin-right:4px;">Khung in:</label>
+      ${Object.keys(CARD_LAYOUTS).map(k=>`<button class="toggle layoutBtn ${layout===k?'active':''}" data-layout="${k}">${CARD_LAYOUTS[k].label}</button>`).join('')}
+    </div>
+    <div class="row" style="margin-top:10px;">
       <button class="btn-primary" id="printBtn" disabled>⏳ Đang tạo mã QR...</button>
     </div>
     <p class="small muted" id="qrStatusMsg" style="margin-top:6px;"></p>
   </div>
-  <div class="cardsheet" id="cardsheet"></div>
+  <div class="cardsheetWrap"><div class="cardsheet" id="cardsheet" data-layout="${layout}"></div></div>
 `;
+};
 afterRender.cards = ()=>{
   const sheet = document.getElementById('cardsheet');
+  const layoutKey = CARD_LAYOUTS[state.cardLayout] ? state.cardLayout : '4';
+  const layout = CARD_LAYOUTS[layoutKey];
+  const perPage = layout.perPage;
+  const total = state.cardCount;
   let html='';
-  for(let i=1;i<=state.cardCount;i++){
+  let pageOpen = false;
+  let pageNum = 0;
+  for(let i=1;i<=total;i++){
+    if((i-1)%perPage===0){
+      if(pageOpen) html += `</div>`;
+      pageNum++;
+      html += `<div class="pagelabel no-print">Trang ${pageNum}</div><div class="printpage">`;
+      pageOpen = true;
+    }
     html += `<div class="plkcard">
       <div class="qrbox" id="qrbox-${i}">
         <span class="lab lab-A">A ▲</span>
@@ -604,11 +669,11 @@ afterRender.cards = ()=>{
       <div class="hint">Xoay thẻ để đáp án muốn chọn ở phía TRÊN<br>(Đúng/Sai: A=Đúng, C=Sai)</div>
     </div>`;
   }
+  if(pageOpen) html += `</div>`;
   sheet.innerHTML = html;
   const printBtn = document.getElementById('printBtn');
   const statusMsg = document.getElementById('qrStatusMsg');
   let done=0, failed=0;
-  const total = state.cardCount;
   if(typeof QRCode === 'undefined'){
     statusMsg.textContent = '❌ Lỗi: thư viện tạo mã QR chưa sẵn sàng. Hãy tải lại trang.';
     printBtn.textContent = '🖨️ In tất cả thẻ';
@@ -618,7 +683,9 @@ afterRender.cards = ()=>{
       (function(i){
         const canvas = document.getElementById('qr-'+i);
         try{
-          QRCode.toCanvas(canvas, 'PLK-'+i, {width:140, margin:1}, (err)=>{
+          // qrPx: vẽ mã QR ở độ phân giải cao hơn kích thước hiển thị (CSS co lại) để khi in ra
+          // nét QR sắc, đậm, không bị vỡ hạt dù phóng to theo khung 1/2/4 thẻ mỗi trang.
+          QRCode.toCanvas(canvas, 'PLK-'+i, {width:layout.qrPx, margin:1, errorCorrectionLevel:'H', color:{dark:'#000000ff', light:'#ffffffff'}}, (err)=>{
             done++;
             if(err){
               failed++;
@@ -638,13 +705,21 @@ afterRender.cards = ()=>{
     if(done>=total){
       printBtn.disabled = false;
       printBtn.textContent = '🖨️ In tất cả thẻ';
-      statusMsg.textContent = failed>0 ? `⚠️ ${failed} thẻ bị lỗi, vui lòng tải lại trang và thử lại.` : `✅ Đã tạo xong ${total} mã QR, sẵn sàng để in.`;
+      statusMsg.textContent = failed>0 ? `⚠️ ${failed} thẻ bị lỗi, vui lòng tải lại trang và thử lại.` : `✅ Đã tạo xong ${total} mã QR (${CARD_LAYOUTS[layoutKey].label}), sẵn sàng để in.`;
     }
   }
+  function changeCount(v){
+    state.cardCount = Math.max(1, Math.min(200, v||1));
+    saveState(); render();
+  }
   document.getElementById('updateCountBtn').addEventListener('click', ()=>{
-    const v = Math.max(1, Math.min(200, +document.getElementById('cardCountInput').value || 45));
-    state.cardCount = v; saveState(); render();
+    changeCount(+document.getElementById('cardCountInput').value || 45);
   });
+  document.getElementById('cardCountMinusBtn').addEventListener('click', ()=>{ changeCount(state.cardCount-1); });
+  document.getElementById('cardCountPlusBtn').addEventListener('click', ()=>{ changeCount(state.cardCount+1); });
+  document.querySelectorAll('.layoutBtn').forEach(b=>b.addEventListener('click', ()=>{
+    state.cardLayout = b.dataset.layout; saveState(); render();
+  }));
   printBtn.addEventListener('click', ()=>window.print());
 };
 
