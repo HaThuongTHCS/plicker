@@ -288,10 +288,10 @@ const DEFAULT_STATE = {
   updatedAt: 0, // mốc thời gian lần sửa dữ liệu gần nhất (dùng để đồng bộ nhiều thiết bị)
   settings: {
     facingMode: 'environment',
-    multiMode: false,
+    multiMode: true, // quét nhiều thẻ QR cùng lúc trong 1 khung hình — bật sẵn theo mặc định
     rotationOffset: 0,
     rotationReversed: false,
-    sync: { url: '', enabled: false } // đồng bộ nhiều thiết bị qua Google Sheets (Apps Script Web App)
+    sync: { url: '', enabled: false, room: '' } // đồng bộ nhiều thiết bị qua Google Sheets (Apps Script Web App) — room = "mã đồng bộ" riêng, cách ly dữ liệu từng người dù dùng chung 1 URL backend
   }
 };
 function mergeWithDefaults(parsed){
@@ -314,7 +314,12 @@ function saveState(){
 }
 // Lưu/áp dụng dữ liệu lấy VỀ từ Google Sheets — không gọi lại scheduleSyncPush để tránh vòng lặp đẩy-lên-ngay-sau-khi-vừa-kéo-về.
 function applyIncomingState(parsed){
+  // Giữ nguyên "định danh đồng bộ" (URL / mã đồng bộ / bật-tắt) của CHÍNH thiết bị này — đây là cấu
+  // hình riêng của thiết bị, không phải dữ liệu lớp học, nên KHÔNG để dữ liệu kéo về từ nơi khác
+  // ghi đè mất (tránh lỗi join phòng xong lại bị đổi ngược mã đồng bộ / tắt mất đồng bộ).
+  const keepSync = state.settings && state.settings.sync ? JSON.parse(JSON.stringify(state.settings.sync)) : null;
   state = mergeWithDefaults(parsed);
+  if(keepSync) state.settings.sync = keepSync;
   localStorage.setItem('plkState_v3', JSON.stringify(state));
 }
 function activeClass(){ return state.classes.find(c=>c.id===state.activeClassId) || null; }
@@ -330,7 +335,17 @@ function activeClass(){ return state.classes.find(c=>c.id===state.activeClassId)
 let syncPushTimer = null;
 let syncPullTimer = null;
 let syncBusy = false;
-function syncConfig(){ return (state.settings && state.settings.sync) || {url:'', enabled:false}; }
+function syncConfig(){ return (state.settings && state.settings.sync) || {url:'', enabled:false, room:''}; }
+// "Mã đồng bộ" (room code): cách ly dữ liệu của từng người dù mọi người cùng dùng chung 1 URL backend
+// (Apps Script) — tránh lặp lại lỗi "ai cũng tự nối vào 1 kho chung nên ghi đè dữ liệu của nhau".
+// Mỗi thiết bị mới tự sinh 1 mã ngẫu nhiên 6 ký tự (bỏ các ký tự dễ nhầm như 0/O, 1/I); muốn nối 2
+// thiết bị lại với nhau, chỉ cần nhập ĐÚNG MỘT mã giống nhau trên cả 2 máy — không cần dán URL dài.
+function genRoomCode(){
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for(let i=0;i<6;i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
 function isEditingEphemeral(){
   // Đang quét / đang soạn đề / đang mở hộp thoại → không áp dữ liệu kéo về để tránh giật màn hình hoặc mất thao tác đang làm.
   const overlay = document.getElementById('modalOverlay');
@@ -343,44 +358,49 @@ function setSyncStatus(text){
 }
 function scheduleSyncPush(){
   const cfg = syncConfig();
-  if(!cfg.enabled || !cfg.url) return;
+  if(!cfg.enabled || !cfg.url || !cfg.room) return;
   clearTimeout(syncPushTimer);
-  syncPushTimer = setTimeout(pushStateToSheet, 1500);
+  syncPushTimer = setTimeout(pushStateToSheet, 800); // đẩy nhanh hơn để cảm giác "tức thì" hơn khi đang quét
 }
 async function pushStateToSheet(){
   const cfg = syncConfig();
-  if(!cfg.enabled || !cfg.url) return;
+  if(!cfg.enabled || !cfg.url || !cfg.room) return;
   try{
     setSyncStatus('⏳ Đang đẩy dữ liệu lên...');
     await fetch(cfg.url, {
       method: 'POST',
       headers: {'Content-Type':'text/plain;charset=utf-8'}, // tránh preflight CORS mà Apps Script không xử lý được
-      body: JSON.stringify({ updatedAt: state.updatedAt, state: state })
+      body: JSON.stringify({ room: cfg.room, updatedAt: state.updatedAt, state: state })
     });
     setSyncStatus('✅ Đã đồng bộ lúc ' + new Date().toLocaleTimeString('vi-VN'));
   }catch(err){
     setSyncStatus('⚠️ Lỗi đẩy dữ liệu lên Google Sheets: ' + err.message);
   }
 }
-async function pullStateFromSheet(manual){
+async function pullStateFromSheet(manual, forceRoom){
   const cfg = syncConfig();
-  if(!cfg.enabled || !cfg.url) return;
+  const room = forceRoom || cfg.room;
+  if(!cfg.enabled || !cfg.url || !room) return;
   if(syncBusy) return;
   if(!manual && isEditingEphemeral()) return; // đang quét/soạn đề/mở hộp thoại thì bỏ qua lượt kéo này, thử lại lượt sau
   syncBusy = true;
   try{
     if(manual) setSyncStatus('⏳ Đang kiểm tra dữ liệu mới...');
-    const res = await fetch(cfg.url, {method:'GET', cache:'no-store'});
+    const res = await fetch(cfg.url+'?room='+encodeURIComponent(room), {method:'GET', cache:'no-store'});
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;
     if(data && data.state && typeof data.updatedAt === 'number'){
-      if(data.updatedAt > (state.updatedAt||0)){
+      // forceRoom = đang CHỦ ĐỘNG đổi sang 1 mã đồng bộ khác (join phòng) → luôn nhận dữ liệu của mã đó,
+      // không so sánh updatedAt (vì mục đích là "đổi sang dùng dữ liệu của phòng kia", không phải hợp nhất).
+      if(forceRoom || data.updatedAt > (state.updatedAt||0)){
         applyIncomingState(data.state);
         renderClassBar(); render();
         setSyncStatus('✅ Đã nhận dữ liệu mới lúc ' + new Date().toLocaleTimeString('vi-VN'));
       }else if(manual){
         setSyncStatus('✅ Dữ liệu đã mới nhất (lúc ' + new Date().toLocaleTimeString('vi-VN') + ')');
       }
+    }else if(forceRoom){
+      setSyncStatus('ℹ️ Mã đồng bộ này chưa có dữ liệu trên Sheet — có thể do thiết bị kia chưa đồng bộ lần nào.');
     }else if(manual){
       setSyncStatus('ℹ️ Sheet chưa có dữ liệu — lần đầu dùng sẽ tự tạo khi bạn sửa gì đó.');
     }
@@ -390,12 +410,26 @@ async function pullStateFromSheet(manual){
     syncBusy = false;
   }
 }
+// Đổi sang dùng một "mã đồng bộ" khác (ghép 2 thiết bị vào cùng 1 phòng dữ liệu).
+async function joinRoom(newRoom){
+  newRoom = (newRoom||'').trim().toUpperCase();
+  if(!newRoom){ toast('⚠️ Mã đồng bộ không được để trống'); return; }
+  state.settings.sync = state.settings.sync || {url:BUILTIN_SYNC_URL, enabled:true, room:''};
+  state.settings.sync.room = newRoom;
+  if(!state.settings.sync.url) state.settings.sync.url = BUILTIN_SYNC_URL;
+  state.settings.sync.enabled = true;
+  saveState();
+  await pullStateFromSheet(true, newRoom);
+  startSyncLoop();
+  toast('✅ Đã chuyển sang mã đồng bộ: '+newRoom);
+  if(currentView==='settings') render();
+}
 function startSyncLoop(){
   stopSyncLoop();
   const cfg = syncConfig();
-  if(!cfg.enabled || !cfg.url) return;
+  if(!cfg.enabled || !cfg.url || !cfg.room) return;
   pullStateFromSheet();
-  syncPullTimer = setInterval(()=>pullStateFromSheet(false), 6000);
+  syncPullTimer = setInterval(()=>pullStateFromSheet(false), 3000); // kéo thường xuyên hơn cho cảm giác gần như tức thì
 }
 function stopSyncLoop(){
   if(syncPullTimer){ clearInterval(syncPullTimer); syncPullTimer = null; }
@@ -1581,16 +1615,27 @@ view_render.settings = ()=>`
 
   <div class="card">
     <h2>🔄 Đồng bộ nhiều thiết bị (qua Google Sheets)</h2>
-    <p class="muted">Dùng chung dữ liệu (lớp, học sinh, đề, lịch sử) giữa điện thoại và máy tính CỦA RIÊNG BẠN — quét bằng điện thoại, máy tính tự thấy sau vài giây. Cần thiết lập 1 lần theo hướng dẫn trong README (mục "Đồng bộ nhiều thiết bị"): tự tạo Google Sheet + Apps Script của riêng bạn, dán URL vào đây rồi bật, và dùng <b>CÙNG một URL này trên mọi thiết bị của bạn</b>.</p>
-    <div class="warnbox">🔒 <b>Không dùng chung URL này với người khác</b> (kể cả đồng nghiệp) — ai cùng dùng 1 URL sẽ cùng ghi đè dữ liệu của nhau, dẫn tới mất danh sách lớp/học sinh đã nhập. Mỗi giáo viên nên tự tạo URL riêng của mình.</div>
-    <label class="muted">URL Google Apps Script (Web App):</label>
-    <input id="syncUrlInput" type="text" placeholder="https://script.google.com/macros/s/..../exec" value="${escapeHtml((state.settings.sync&&state.settings.sync.url)||'')}" style="width:100%;margin:4px 0 10px;">
+    <p class="muted">App <b>đã tự kết nối đồng bộ sẵn</b> — lớp, học sinh, đề, lịch sử quét được tự lưu lên và đồng bộ, không cần cài gì thêm. Để điện thoại và máy tính dùng <b>chung một dữ liệu</b>, hai máy chỉ cần có <b>ĐÚNG MỘT "Mã đồng bộ" giống nhau</b> — mỗi mã là một "phòng" dữ liệu riêng, không ai khác (kể cả người lạ mở trúng link này) đụng được vào dữ liệu của bạn nếu không biết mã.</p>
+    <label class="muted">Mã đồng bộ của máy này:</label>
     <div class="row" style="align-items:center;">
+      <input id="syncRoomInput" type="text" value="${escapeHtml((state.settings.sync&&state.settings.sync.room)||'')}" maxlength="8" style="width:150px;text-align:center;font-weight:800;letter-spacing:3px;text-transform:uppercase;">
+      <button class="btn-ghost" id="copyRoomBtn">📋 Copy mã</button>
+      <button class="btn-primary" id="joinRoomBtn">✅ Dùng mã này</button>
+    </div>
+    <p class="small muted" style="margin-top:6px;">👉 Trên thiết bị còn lại (điện thoại/máy tính kia), mở đúng mục này, xoá mã cũ và gõ/dán <b>mã đồng bộ ở trên</b> vào, rồi bấm "Dùng mã này" — 2 máy sẽ chung 1 dữ liệu ngay sau vài giây.</p>
+    <div class="row" style="align-items:center;margin-top:10px;">
       <label class="inline"><input type="checkbox" id="syncEnabledChk" ${state.settings.sync&&state.settings.sync.enabled?'checked':''}> Bật đồng bộ tự động</label>
       <button class="btn-ghost" id="syncNowBtn">🔄 Đồng bộ ngay</button>
     </div>
-    <p class="small muted" id="syncStatusText" style="margin-top:8px;">${state.settings.sync&&state.settings.sync.enabled? 'Đồng bộ đang bật.' : 'Chưa bật đồng bộ — mọi dữ liệu chỉ lưu trên thiết bị này (vẫn được lưu lại đầy đủ mỗi khi bạn sửa, không cần bật đồng bộ).'}</p>
+    <p class="small muted" id="syncStatusText" style="margin-top:8px;">${state.settings.sync&&state.settings.sync.enabled? 'Đồng bộ đang bật.' : 'Chưa bật đồng bộ — mọi dữ liệu chỉ lưu trên thiết bị này.'}</p>
     <div class="warnbox">⚠️ Lưu ý: dữ liệu kéo về sẽ <b>thay thế toàn bộ</b> dữ liệu hiện tại trên thiết bị (lấy bản mới nhất theo thời gian sửa). Nếu 2 thiết bị cùng sửa dữ liệu ở cùng một thời điểm, bản sửa <b>sau cùng</b> sẽ thắng — vì vậy tránh vừa quét vừa sửa danh sách lớp trên 2 máy cùng lúc.</div>
+    <div class="warnbox">🔒 Không đưa "Mã đồng bộ" của bạn cho người không liên quan — ai biết mã đều đọc/ghi được dữ liệu của phòng đó.</div>
+    <details style="margin-top:10px;">
+      <summary class="muted" style="cursor:pointer;">⚙️ Nâng cao: dùng Google Apps Script của riêng tôi (không dùng chung backend mặc định)</summary>
+      <label class="muted">URL Google Apps Script (Web App):</label>
+      <input id="syncUrlInput" type="text" placeholder="https://script.google.com/macros/s/..../exec" value="${escapeHtml((state.settings.sync&&state.settings.sync.url)||'')}" style="width:100%;margin:4px 0 10px;">
+      <p class="small muted">Chỉ cần đổi mục này nếu bạn muốn tự lưu dữ liệu trên Google Sheet của chính mình thay vì dùng chung hạ tầng mặc định của app (xem README mục "Đồng bộ nhiều thiết bị").</p>
+    </details>
   </div>
 
   <div class="card">
@@ -1612,27 +1657,39 @@ let calibState = {raw:0};
 afterRender.settings = ()=>{
   document.getElementById('facingSelect').addEventListener('change', e=>{ state.settings.facingMode = e.target.value; saveState(); });
   document.getElementById('syncUrlInput').addEventListener('change', e=>{
-    state.settings.sync = state.settings.sync || {url:'', enabled:false};
+    state.settings.sync = state.settings.sync || {url:'', enabled:false, room:''};
     state.settings.sync.url = e.target.value.trim();
     saveState();
     if(state.settings.sync.enabled) startSyncLoop();
   });
   document.getElementById('syncEnabledChk').addEventListener('change', e=>{
-    state.settings.sync = state.settings.sync || {url:'', enabled:false};
+    state.settings.sync = state.settings.sync || {url:BUILTIN_SYNC_URL, enabled:false, room:genRoomCode()};
     state.settings.sync.enabled = e.target.checked;
-    if(e.target.checked && !state.settings.sync.url){
-      toast('⚠️ Hãy dán URL Google Apps Script trước khi bật đồng bộ');
-      e.target.checked = false; state.settings.sync.enabled = false;
-      return;
-    }
+    if(!state.settings.sync.url) state.settings.sync.url = BUILTIN_SYNC_URL;
+    if(!state.settings.sync.room) state.settings.sync.room = genRoomCode();
     saveState();
-    if(state.settings.sync.enabled){ startSyncLoop(); toast('✅ Đã bật đồng bộ'); }
+    if(state.settings.sync.enabled){ startSyncLoop(); toast('✅ Đã bật đồng bộ'); render(); }
     else{ stopSyncLoop(); setSyncStatus('Chưa bật đồng bộ — mọi dữ liệu chỉ lưu trên thiết bị này.'); toast('Đã tắt đồng bộ'); }
   });
   document.getElementById('syncNowBtn').addEventListener('click', async ()=>{
-    if(!state.settings.sync || !state.settings.sync.url){ toast('⚠️ Hãy dán URL Google Apps Script trước'); return; }
+    if(!state.settings.sync || !state.settings.sync.room){ toast('⚠️ Hãy bật đồng bộ trước (sẽ tự có mã đồng bộ)'); return; }
     await pullStateFromSheet(true);
     await pushStateToSheet();
+  });
+  document.getElementById('copyRoomBtn').addEventListener('click', async ()=>{
+    const code = (state.settings.sync&&state.settings.sync.room)||'';
+    if(!code){ toast('⚠️ Chưa có mã đồng bộ — hãy bật đồng bộ trước'); return; }
+    try{ await navigator.clipboard.writeText(code); toast('📋 Đã copy mã: '+code); }
+    catch(e){ toast('Mã đồng bộ: '+code); }
+  });
+  document.getElementById('joinRoomBtn').addEventListener('click', ()=>{
+    const newRoom = (document.getElementById('syncRoomInput').value||'').trim().toUpperCase();
+    if(!newRoom){ toast('⚠️ Hãy nhập mã đồng bộ'); return; }
+    const curRoom = (state.settings.sync&&state.settings.sync.room)||'';
+    if(newRoom===curRoom){ toast('Mã đồng bộ không đổi'); return; }
+    modalConfirm('Đổi mã đồng bộ', `Chuyển máy này sang mã đồng bộ "${escapeHtml(newRoom)}"? Dữ liệu hiện tại trên máy này (lớp, học sinh,...) sẽ được THAY THẾ bằng dữ liệu của mã đó (nếu đã có).`, ()=>{
+      joinRoom(newRoom);
+    });
   });
   document.getElementById('reverseChk').addEventListener('change', e=>{ state.settings.rotationReversed = e.target.checked; saveState(); });
   document.querySelectorAll('[data-letter]').forEach(b=>b.addEventListener('click', ()=>{
@@ -1720,23 +1777,24 @@ if(BUILTIN_SYNC_URL && OLD_BUILTIN_SYNC_URLS.includes(state.settings.sync.url)){
   state.settings.sync.url = BUILTIN_SYNC_URL;
   saveState();
 }
-// QUAN TRỌNG: KHÔNG tự điền + tự bật sẵn một URL đồng bộ DÙNG CHUNG cho mọi người. Trang này chạy
-// công khai trên GitHub Pages — ai có link cũng mở được — nên nếu mọi người cùng tự động nối vào
-// MỘT kho dữ liệu chung, dữ liệu (danh sách lớp, học sinh...) của người này sẽ liên tục bị người
-// khác ghi đè mất (ai lưu sau cùng thì "thắng"), đúng kiểu lỗi "vừa dán danh sách xong lại mất".
-// Mỗi người cần tự tạo Google Sheet + Apps Script RIÊNG của mình (xem README) rồi mới bật đồng bộ
-// thủ công trong mục Cài đặt — vì vậy KHÔNG còn đoạn tự-bật-sẵn ở đây nữa.
-//
-// Bảo vệ cho các thiết bị đã lỡ dính bản cũ (từng tự bật sẵn đồng bộ dùng-chung-cho-mọi-người):
-// tự tắt lại ngay, để dữ liệu trên máy không tiếp tục bị người khác ghi đè nữa.
-if(BUILTIN_SYNC_URL && state.settings.sync.enabled && state.settings.sync.url === BUILTIN_SYNC_URL){
-  state.settings.sync.enabled = false;
-  saveState();
-  setTimeout(()=>{ toast('⚠️ Đã tự tắt đồng bộ dùng chung (dễ bị người khác ghi đè mất dữ liệu). Vào mục Cài đặt để tự thiết lập đồng bộ RIÊNG cho các thiết bị của bạn.'); }, 1000);
+// Tự kết nối đồng bộ sẵn cho MỌI thiết bị — nhưng an toàn: mỗi thiết bị mới tự sinh riêng 1
+// "mã đồng bộ" (room) ngẫu nhiên, nên dù dùng chung 1 URL backend, dữ liệu của mỗi người vẫn tách
+// biệt hoàn toàn (không ai đọc/ghi được dữ liệu của ai nếu không biết đúng mã). Muốn 2 thiết bị
+// (điện thoại + máy tính) dùng chung dữ liệu, người dùng chỉ cần nhập GIỐNG NHAU 1 mã ở Cài đặt.
+const neededNewRoom = !state.settings.sync.room; // true = thiết bị hoàn toàn mới, HOẶC thiết bị từng bị
+                                                   // tự tắt đồng bộ chung ở bản trước (room chưa từng có)
+if(BUILTIN_SYNC_URL && !state.settings.sync.url){ state.settings.sync.url = BUILTIN_SYNC_URL; }
+if(neededNewRoom){ state.settings.sync.room = genRoomCode(); }
+if(BUILTIN_SYNC_URL && state.settings.sync.url===BUILTIN_SYNC_URL && neededNewRoom){
+  state.settings.sync.enabled = true; // chỉ tự bật vào đúng lúc vừa cấp mã đồng bộ lần đầu
 }
+// Bật sẵn "Quét nhiều thẻ cùng lúc" cho mọi thiết bị (kể cả thiết bị cũ đã lưu state từ trước khi
+// có mục này) — đúng theo yêu cầu "có thể nhận diện nhiều thẻ QR cùng một lúc".
+state.settings.multiMode = true;
+saveState();
 renderClassBar();
 goTo('home');
-startSyncLoop(); // chỉ thực sự kết nối nếu người dùng đã tự dán URL của riêng mình VÀ tự bật đồng bộ
+startSyncLoop();
 </script>
 </body>
 </html>
