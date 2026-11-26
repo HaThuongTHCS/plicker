@@ -1760,7 +1760,10 @@ function calibLoop(ts){
 /* ===================== UTIL ===================== */
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function downloadFile(filename, content){
-  const blob = new Blob([content], {type:'text/plain;charset=utf-8'});
+  // Thêm BOM (﻿) ở đầu file: nếu không có, Excel/Google Sheets hay đoán nhầm bảng mã khi mở
+  // file .txt/.csv (không phải UTF-8), khiến tiếng Việt có dấu hiện ra sai/vỡ font ("lỗi font").
+  // Có BOM thì các phần mềm này nhận đúng ngay là UTF-8.
+  const blob = new Blob(['﻿' + content], {type:'text/plain;charset=utf-8'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
