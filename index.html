@@ -424,6 +424,17 @@ async function joinRoom(newRoom){
   toast('✅ Đã chuyển sang mã đồng bộ: '+newRoom);
   if(currentView==='settings') render();
 }
+// Vẽ mã QR "ghép đôi" ở màn hình Cài đặt: mã hoá sẵn link app + ?room=<mã hiện tại>. Thiết bị khác
+// chỉ cần dùng Camera (ứng dụng chụp ảnh của máy, không phải app này) quét mã QR này là tự mở app
+// VÀ tự nhận đúng mã đồng bộ — không cần gõ/dán tay (xem initRoomFromUrlParam()).
+function renderPairQr(){
+  const cvs = document.getElementById('pairQrCanvas');
+  if(!cvs || typeof QRCode === 'undefined') return;
+  const room = (state.settings.sync && state.settings.sync.room) || '';
+  if(!room) return;
+  const pairUrl = location.origin + location.pathname + '?room=' + encodeURIComponent(room);
+  QRCode.toCanvas(cvs, pairUrl, {width:150, margin:1, errorCorrectionLevel:'M'}, ()=>{});
+}
 function startSyncLoop(){
   stopSyncLoop();
   const cfg = syncConfig();
@@ -1016,7 +1027,7 @@ view_render.scan = ()=>{
       <div id="camRecentScans" class="camRecentScans"></div>
       ${!cam.scanning?`<div class="camOverlay">Nhấn "Mở camera" để bắt đầu quét thẻ học sinh</div>`:''}
     </div>
-    <p class="small muted" style="margin-top:6px;">🟥 Khung đỏ = đang nhận diện thẻ &nbsp; 🟩 Khung xanh = đã quét xong (không phân biệt đúng/sai bằng màu)</p>
+    <p class="small muted" style="margin-top:6px;">🟥 Khung đỏ = đang nhận diện thẻ &nbsp; 🟩 Khung xanh = đã quét xong (không phân biệt đúng/sai bằng màu)${state.settings.multiMode? ' &nbsp; ⬜ Lưới chấm = 9 "ô quét" — mỗi học sinh nên giơ thẻ lọt trong 1 ô để camera nhận chắc chắn hơn':''}</p>
     <canvas id="procCanvas" style="display:none;"></canvas>
   </div>
 
@@ -1333,15 +1344,22 @@ function doScanFrame(){
   if(state.settings.multiMode){
     const cols=3, rows=3;
     const tw = Math.floor(cvs.width/cols), th = Math.floor(cvs.height/rows);
-    for(let r=0;r<rows;r++) for(let cc=0;cc<cols;cc++){
-      const img = ctx.getImageData(cc*tw, r*th, tw, th);
-      const code = jsQR(img.data, tw, th);
+    const scanTile = (ox, oy, w, h)=>{
+      if(w<=0 || h<=0 || ox<0 || oy<0 || ox+w>cvs.width || oy+h>cvs.height) return;
+      const img = ctx.getImageData(ox, oy, w, h);
+      const code = jsQR(img.data, w, h);
       if(code){
-        const ox=cc*tw, oy=r*th;
         detections.push({data:code.data, location: offsetLocation(code.location, ox, oy)});
         handleCode(code);
       }
-    }
+    };
+    // Lượt 1: lưới 3x3 (9 ô) — nhận diện được tối đa 1 mã QR mỗi ô.
+    for(let r=0;r<rows;r++) for(let cc=0;cc<cols;cc++) scanTile(cc*tw, r*th, tw, th);
+    // Lượt 2: lưới lệch nửa ô (2x2 = 4 ô) để "vá" các thẻ bị cắt ngang đường chia ô của lượt 1 —
+    // nhờ vậy quét được nhiều thẻ cùng lúc (5 thẻ trở lên) chắc chắn hơn, kể cả khi các thẻ nằm
+    // sát mép ô lưới chính. Thẻ đã nhận ở lượt 1 sẽ tự bỏ qua ở đây (chống trùng trong handleCode).
+    const hw = Math.floor(tw/2), hh = Math.floor(th/2);
+    for(let r=0;r<2;r++) for(let cc=0;cc<2;cc++) scanTile(hw+cc*tw, hh+r*th, tw, th);
   }else{
     const img = ctx.getImageData(0,0,cvs.width,cvs.height);
     const code = jsQR(img.data, img.width, img.height);
@@ -1370,6 +1388,21 @@ function renderCamOverlay(video, detections){
   if(ocvs.height !== dispH) ocvs.height = dispH;
   const octx = ocvs.getContext('2d');
   octx.clearRect(0,0,dispW,dispH);
+  // Vẽ lưới "ô quét" 3x3 mờ, hiện SẴN trong khung camera (kể cả chưa nhận diện thẻ nào) để biết nên
+  // đặt mỗi thẻ vào đâu — chỉ hiện khi đang bật "Quét nhiều thẻ cùng lúc".
+  if(state.settings.multiMode){
+    octx.save();
+    octx.strokeStyle = 'rgba(255,255,255,0.55)';
+    octx.lineWidth = 1.5;
+    octx.setLineDash([6,6]);
+    for(let i=1;i<3;i++){
+      const x = dispW/3*i;
+      octx.beginPath(); octx.moveTo(x,0); octx.lineTo(x,dispH); octx.stroke();
+      const y = dispH/3*i;
+      octx.beginPath(); octx.moveTo(0,y); octx.lineTo(dispW,y); octx.stroke();
+    }
+    octx.restore();
+  }
   if(!detections.length) return;
   // video dùng object-fit:cover nên toạ độ gốc (videoWidth/videoHeight) cần quy đổi sang kích thước hiển thị
   const scale = Math.max(dispW/video.videoWidth, dispH/video.videoHeight);
@@ -1623,6 +1656,12 @@ view_render.settings = ()=>`
       <button class="btn-primary" id="joinRoomBtn">✅ Dùng mã này</button>
     </div>
     <p class="small muted" style="margin-top:6px;">👉 Trên thiết bị còn lại (điện thoại/máy tính kia), mở đúng mục này, xoá mã cũ và gõ/dán <b>mã đồng bộ ở trên</b> vào, rồi bấm "Dùng mã này" — 2 máy sẽ chung 1 dữ liệu ngay sau vài giây.</p>
+    <div class="row" style="align-items:flex-start;gap:14px;margin-top:10px;flex-wrap:wrap;">
+      <div style="text-align:center;">
+        <canvas id="pairQrCanvas" width="150" height="150" style="border-radius:8px;"></canvas>
+      </div>
+      <p class="small muted" style="max-width:320px;">📱 <b>Không muốn gõ tay mã?</b> Dùng Camera (ứng dụng chụp ảnh mặc định, không phải app này) trên điện thoại quét mã QR bên cạnh — máy đó sẽ tự mở app và tự ghép đúng mã đồng bộ này, không cần nhập gì thêm.</p>
+    </div>
     <div class="row" style="align-items:center;margin-top:10px;">
       <label class="inline"><input type="checkbox" id="syncEnabledChk" ${state.settings.sync&&state.settings.sync.enabled?'checked':''}> Bật đồng bộ tự động</label>
       <button class="btn-ghost" id="syncNowBtn">🔄 Đồng bộ ngay</button>
@@ -1656,6 +1695,7 @@ view_render.settings = ()=>`
 let calibState = {raw:0};
 afterRender.settings = ()=>{
   document.getElementById('facingSelect').addEventListener('change', e=>{ state.settings.facingMode = e.target.value; saveState(); });
+  renderPairQr();
   document.getElementById('syncUrlInput').addEventListener('change', e=>{
     state.settings.sync = state.settings.sync || {url:'', enabled:false, room:''};
     state.settings.sync.url = e.target.value.trim();
@@ -1782,21 +1822,39 @@ if(BUILTIN_SYNC_URL && OLD_BUILTIN_SYNC_URLS.includes(state.settings.sync.url)){
   state.settings.sync.url = BUILTIN_SYNC_URL;
   saveState();
 }
+// Ghép đôi bằng link/QR: nếu trang được mở từ 1 link có sẵn ?room=XXXXXX (ví dụ do quét mã QR "ghép
+// đôi" ở màn Cài đặt của thiết bị kia), tự nhận LUÔN mã đồng bộ đó — không cần gõ/dán tay. Việc quét
+// đúng mã QR đó chính là hành động "xác nhận ghép đôi" của người dùng rồi, nên không hỏi lại.
+const urlRoomParam = (()=>{ try{ return (new URLSearchParams(location.search)).get('room'); }catch(e){ return null; } })();
+const pairedFromUrl = urlRoomParam && urlRoomParam.trim();
+if(pairedFromUrl){
+  state.settings.sync = state.settings.sync || {url:'', enabled:false, room:''};
+  state.settings.sync.room = pairedFromUrl.trim().toUpperCase();
+  // Xoá ?room=... khỏi thanh địa chỉ để lỡ tải lại trang/đánh dấu trang không bị ghép lại lần nữa.
+  try{ history.replaceState(null, '', location.pathname); }catch(e){}
+}
 // Tự kết nối đồng bộ sẵn cho MỌI thiết bị — nhưng an toàn: mỗi thiết bị mới tự sinh riêng 1
 // "mã đồng bộ" (room) ngẫu nhiên, nên dù dùng chung 1 URL backend, dữ liệu của mỗi người vẫn tách
 // biệt hoàn toàn (không ai đọc/ghi được dữ liệu của ai nếu không biết đúng mã). Muốn 2 thiết bị
-// (điện thoại + máy tính) dùng chung dữ liệu, người dùng chỉ cần nhập GIỐNG NHAU 1 mã ở Cài đặt.
+// (điện thoại + máy tính) dùng chung dữ liệu, người dùng chỉ cần nhập GIỐNG NHAU 1 mã ở Cài đặt,
+// hoặc quét mã QR "ghép đôi" (xem ở trên) — không cần gõ tay.
 const neededNewRoom = !state.settings.sync.room; // true = thiết bị hoàn toàn mới, HOẶC thiết bị từng bị
                                                    // tự tắt đồng bộ chung ở bản trước (room chưa từng có)
 if(BUILTIN_SYNC_URL && !state.settings.sync.url){ state.settings.sync.url = BUILTIN_SYNC_URL; }
 if(neededNewRoom){ state.settings.sync.room = genRoomCode(); }
-if(BUILTIN_SYNC_URL && state.settings.sync.url===BUILTIN_SYNC_URL && neededNewRoom){
-  state.settings.sync.enabled = true; // chỉ tự bật vào đúng lúc vừa cấp mã đồng bộ lần đầu
+if(BUILTIN_SYNC_URL && state.settings.sync.url===BUILTIN_SYNC_URL && (neededNewRoom || pairedFromUrl)){
+  state.settings.sync.enabled = true; // chỉ tự bật vào đúng lúc vừa cấp/ghép mã đồng bộ lần đầu
 }
 // Bật sẵn "Quét nhiều thẻ cùng lúc" cho mọi thiết bị (kể cả thiết bị cũ đã lưu state từ trước khi
 // có mục này) — đúng theo yêu cầu "có thể nhận diện nhiều thẻ QR cùng một lúc".
 state.settings.multiMode = true;
 saveState();
+if(pairedFromUrl){
+  // Ghép đôi xong: kéo NGAY dữ liệu của mã đồng bộ vừa nhận về (ghi đè dữ liệu rỗng/mặc định của
+  // thiết bị này — giống hệt hành vi khi bấm "Dùng mã này" thủ công ở Cài đặt).
+  pullStateFromSheet(true, state.settings.sync.room).then(()=>{ render(); });
+  toast('✅ Đã ghép đôi với mã đồng bộ: '+state.settings.sync.room, 3500);
+}
 renderClassBar();
 goTo('home');
 startSyncLoop();
