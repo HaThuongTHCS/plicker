@@ -275,7 +275,7 @@ function modalConfirm(title, message, cb){
 // URL Google Apps Script Web App do cô Thương tạo sẵn — dùng để tự động đồng bộ dữ liệu
 // giữa điện thoại và máy tính (xem mục "🔄 Đồng bộ nhiều thiết bị" trong README).
 // Để trống ('') nếu không muốn tự bật đồng bộ sẵn cho người dùng khác khi họ mở app này.
-const BUILTIN_SYNC_URL = 'https://script.google.com/macros/s/AKfycbx4fHxSfbqg4Ob_4mP8GfjEmujFOEWc1NYF7uJHfXf4gVAon7hgfxrn32GSiokKe216/exec';
+const BUILTIN_SYNC_URL = 'https://script.google.com/macros/s/AKfycbzK054ewOctcW5lSo4gWRL5Md_ksHQO1NMfLKUinfdegs4be5UDfIJ9Qm0dxlZkwiZx/exec';
 
 const DEFAULT_STATE = {
   cardCount: 45,
@@ -1774,7 +1774,9 @@ function downloadFile(filename, content){
 // chưa Deploy đúng quyền "Anyone" nên không dùng được) — nếu thiết bị đang lưu đúng 1 trong các URL
 // cũ này, tự thay bằng BUILTIN_SYNC_URL mới nhất, để không ai bị "kẹt" với URL hỏng đã lưu trước đó.
 const OLD_BUILTIN_SYNC_URLS = [
-  'https://script.google.com/macros/s/AKfycbyrpJkfAbUZGhLJWZgGVhBPO9MXn8RlK3khHD0r3BVoWRs4CQw6DPAJUMyrxzc4qKNr/exec'
+  'https://script.google.com/macros/s/AKfycbyrpJkfAbUZGhLJWZgGVhBPO9MXn8RlK3khHD0r3BVoWRs4CQw6DPAJUMyrxzc4qKNr/exec',
+  'https://script.google.com/macros/s/AKfycbx4fHxSfbqg4Ob_4mP8GfjEmujFOEWc1NYF7uJHfXf4gVAon7hgfxrn32GSiokKe216/exec',
+  'https://script.google.com/macros/s/AKfycby0O2Leky06KY3jZFHT47EeTi4b6tpJ31wjtI4YVlQ5mYK45qEbiYRdM3kletV1TeX1/exec'
 ];
 if(BUILTIN_SYNC_URL && OLD_BUILTIN_SYNC_URLS.includes(state.settings.sync.url)){
   state.settings.sync.url = BUILTIN_SYNC_URL;
