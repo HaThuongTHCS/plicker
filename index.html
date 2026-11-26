@@ -1581,14 +1581,15 @@ view_render.settings = ()=>`
 
   <div class="card">
     <h2>🔄 Đồng bộ nhiều thiết bị (qua Google Sheets)</h2>
-    <p class="muted">Dùng chung dữ liệu (lớp, học sinh, đề, lịch sử) giữa điện thoại và máy tính — quét bằng điện thoại, máy tính tự thấy sau vài giây.${BUILTIN_SYNC_URL? ' App này đã có sẵn URL đồng bộ của cô Thương và <b>tự bật sẵn</b> — bình thường bạn không cần sửa gì ở đây. Chỉ cần vào mục này nếu muốn đổi sang một kho dữ liệu khác.' : ' Cần thiết lập 1 lần theo hướng dẫn trong README (mục "Đồng bộ nhiều thiết bị"), sau đó dán URL vào đây và dùng <b>CÙNG một URL này trên mọi thiết bị</b>.'}</p>
+    <p class="muted">Dùng chung dữ liệu (lớp, học sinh, đề, lịch sử) giữa điện thoại và máy tính CỦA RIÊNG BẠN — quét bằng điện thoại, máy tính tự thấy sau vài giây. Cần thiết lập 1 lần theo hướng dẫn trong README (mục "Đồng bộ nhiều thiết bị"): tự tạo Google Sheet + Apps Script của riêng bạn, dán URL vào đây rồi bật, và dùng <b>CÙNG một URL này trên mọi thiết bị của bạn</b>.</p>
+    <div class="warnbox">🔒 <b>Không dùng chung URL này với người khác</b> (kể cả đồng nghiệp) — ai cùng dùng 1 URL sẽ cùng ghi đè dữ liệu của nhau, dẫn tới mất danh sách lớp/học sinh đã nhập. Mỗi giáo viên nên tự tạo URL riêng của mình.</div>
     <label class="muted">URL Google Apps Script (Web App):</label>
     <input id="syncUrlInput" type="text" placeholder="https://script.google.com/macros/s/..../exec" value="${escapeHtml((state.settings.sync&&state.settings.sync.url)||'')}" style="width:100%;margin:4px 0 10px;">
     <div class="row" style="align-items:center;">
       <label class="inline"><input type="checkbox" id="syncEnabledChk" ${state.settings.sync&&state.settings.sync.enabled?'checked':''}> Bật đồng bộ tự động</label>
       <button class="btn-ghost" id="syncNowBtn">🔄 Đồng bộ ngay</button>
     </div>
-    <p class="small muted" id="syncStatusText" style="margin-top:8px;">${state.settings.sync&&state.settings.sync.enabled? 'Đồng bộ đang bật.' : 'Chưa bật đồng bộ — mọi dữ liệu chỉ lưu trên thiết bị này.'}</p>
+    <p class="small muted" id="syncStatusText" style="margin-top:8px;">${state.settings.sync&&state.settings.sync.enabled? 'Đồng bộ đang bật.' : 'Chưa bật đồng bộ — mọi dữ liệu chỉ lưu trên thiết bị này (vẫn được lưu lại đầy đủ mỗi khi bạn sửa, không cần bật đồng bộ).'}</p>
     <div class="warnbox">⚠️ Lưu ý: dữ liệu kéo về sẽ <b>thay thế toàn bộ</b> dữ liệu hiện tại trên thiết bị (lấy bản mới nhất theo thời gian sửa). Nếu 2 thiết bị cùng sửa dữ liệu ở cùng một thời điểm, bản sửa <b>sau cùng</b> sẽ thắng — vì vậy tránh vừa quét vừa sửa danh sách lớp trên 2 máy cùng lúc.</div>
   </div>
 
@@ -1719,17 +1720,23 @@ if(BUILTIN_SYNC_URL && OLD_BUILTIN_SYNC_URLS.includes(state.settings.sync.url)){
   state.settings.sync.url = BUILTIN_SYNC_URL;
   saveState();
 }
-// Nếu thiết bị này CHƯA từng tự thiết lập URL đồng bộ riêng, và app có URL đồng bộ dựng sẵn
-// (BUILTIN_SYNC_URL), tự điền và bật đồng bộ luôn — để mọi thiết bị mở file này tự liên thông
-// với nhau ngay, không cần vào Cài đặt dán URL từng máy.
-if(BUILTIN_SYNC_URL && !state.settings.sync.url){
-  state.settings.sync.url = BUILTIN_SYNC_URL;
-  state.settings.sync.enabled = true;
+// QUAN TRỌNG: KHÔNG tự điền + tự bật sẵn một URL đồng bộ DÙNG CHUNG cho mọi người. Trang này chạy
+// công khai trên GitHub Pages — ai có link cũng mở được — nên nếu mọi người cùng tự động nối vào
+// MỘT kho dữ liệu chung, dữ liệu (danh sách lớp, học sinh...) của người này sẽ liên tục bị người
+// khác ghi đè mất (ai lưu sau cùng thì "thắng"), đúng kiểu lỗi "vừa dán danh sách xong lại mất".
+// Mỗi người cần tự tạo Google Sheet + Apps Script RIÊNG của mình (xem README) rồi mới bật đồng bộ
+// thủ công trong mục Cài đặt — vì vậy KHÔNG còn đoạn tự-bật-sẵn ở đây nữa.
+//
+// Bảo vệ cho các thiết bị đã lỡ dính bản cũ (từng tự bật sẵn đồng bộ dùng-chung-cho-mọi-người):
+// tự tắt lại ngay, để dữ liệu trên máy không tiếp tục bị người khác ghi đè nữa.
+if(BUILTIN_SYNC_URL && state.settings.sync.enabled && state.settings.sync.url === BUILTIN_SYNC_URL){
+  state.settings.sync.enabled = false;
   saveState();
+  setTimeout(()=>{ toast('⚠️ Đã tự tắt đồng bộ dùng chung (dễ bị người khác ghi đè mất dữ liệu). Vào mục Cài đặt để tự thiết lập đồng bộ RIÊNG cho các thiết bị của bạn.'); }, 1000);
 }
 renderClassBar();
 goTo('home');
-startSyncLoop(); // tự kết nối đồng bộ ngay khi mở trang (nếu đã có URL, dù tự điền hay do người dùng tự dán)
+startSyncLoop(); // chỉ thực sự kết nối nếu người dùng đã tự dán URL của riêng mình VÀ tự bật đồng bộ
 </script>
 </body>
 </html>
