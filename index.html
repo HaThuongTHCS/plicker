@@ -53,10 +53,13 @@
   .toast{background:#111;color:#fff;padding:10px 16px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.4);font-weight:700;animation:slide .25s;max-width:300px;}
   @keyframes slide{from{transform:translateX(30px);opacity:0}to{transform:translateX(0);opacity:1}}
   .student-chip{display:flex;align-items:center;gap:8px;background:#f3f1fb;border-radius:10px;padding:6px 10px;font-size:13px;font-weight:700;}
+  /* "Đã quét" luôn hiện 1 màu xanh duy nhất — KHÔNG phân biệt đáp án đúng/sai bằng màu sắc ở đây */
   .student-chip.answered{background:#dcfce7;color:#166534;}
-  .student-chip.correct{background:#dcfce7;color:#166534;}
-  .student-chip.wrong{background:#fee2e2;color:#991b1b;}
   .student-chip .num{background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;}
+  .studentCols{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;}
+  .studentCols .colTitle{font-weight:800;font-size:13px;color:#666;margin-bottom:8px;}
+  .studentCols .chipList{display:flex;flex-wrap:wrap;gap:8px;min-height:30px;}
+  @media (max-width:560px){ .studentCols{grid-template-columns:1fr;} }
   .opt{border-radius:12px;padding:14px 16px;color:#fff;font-weight:800;font-size:16px;display:flex;gap:10px;align-items:center;position:relative;overflow:hidden;}
   .opt .letter{background:rgba(0,0,0,.25);border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .opt.correct{outline:4px solid #fff;}
@@ -68,6 +71,12 @@
   .camwrap{position:relative;border-radius:var(--radius);overflow:hidden;background:#000;aspect-ratio:4/3;max-height:420px;}
   .camwrap video{width:100%;height:100%;object-fit:cover;display:block;}
   .camwrap .camOverlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;background:rgba(0,0,0,.5);font-weight:700;text-align:center;padding:14px;}
+  /* Khung nhận diện mã QR vẽ đè lên video: ĐỎ = đang nhận diện (chưa ghi nhận), XANH = đã quét xong
+     (không dùng màu để phân biệt đáp án đúng/sai, chỉ báo hiệu trạng thái đã quét hay chưa). */
+  .camwrap #camOverlayCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+  .camRecentScans{position:absolute;left:0;right:0;bottom:0;padding:10px;display:flex;flex-direction:column-reverse;align-items:flex-start;gap:6px;pointer-events:none;}
+  .camRecentScans .nameTag{background:rgba(22,101,52,.92);color:#fff;font-weight:800;font-size:13px;padding:5px 12px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.3);animation:fadeInUp .25s ease;white-space:nowrap;}
+  @keyframes fadeInUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
   /* Khổ giấy in: A4 — mọi kích thước trang/thẻ bên dưới dùng đơn vị mm nên trên MÀN HÌNH đã
      hiển thị đúng tỉ lệ thật như khi in ra A4, không chỉ to hơn tuỳ hứng. */
   @page{ size:A4; margin:8mm; }
@@ -876,7 +885,15 @@ afterRender.keys = ()=>{
 
 /* ===================== SCAN ===================== */
 let scan = null; // {type:'mcq'|'tf', correct, graded, responses:{cardId:{letter,t}}, startedAt}
-let cam = {stream:null, scanning:false, lastSeen:{}, rafId:null, lastScanTs:0};
+let cam = {stream:null, scanning:false, lastSeen:{}, rafId:null, lastScanTs:0, recentScans:[]};
+// Xây danh sách thẻ học sinh cho 1 trong 2 cột (chưa quét / đã quét).
+// "Đã quét" luôn hiện 1 màu xanh duy nhất — KHÔNG phân biệt đáp án đúng/sai bằng màu sắc ở đây.
+function buildStudentChipsHtml(rosterEntries, scanObj, labels, wantScanned){
+  return rosterEntries.filter(([cid])=> !!scanObj.responses[cid] === wantScanned).map(([cid,name])=>{
+    const r = scanObj.responses[cid];
+    return `<div class="student-chip ${r?'answered':''}">${r? (labels[r.letter]) + ' ' : ''}<span class="num">${cid}</span> ${escapeHtml(name)}</div>`;
+  }).join('');
+}
 
 view_render.scan = ()=>{
   const c = activeClass();
@@ -961,20 +978,25 @@ view_render.scan = ()=>{
     </div>
     <div class="camwrap">
       <video id="camVideo" playsinline muted></video>
+      <canvas id="camOverlayCanvas"></canvas>
+      <div id="camRecentScans" class="camRecentScans"></div>
       ${!cam.scanning?`<div class="camOverlay">Nhấn "Mở camera" để bắt đầu quét thẻ học sinh</div>`:''}
     </div>
+    <p class="small muted" style="margin-top:6px;">🟥 Khung đỏ = đang nhận diện thẻ &nbsp; 🟩 Khung xanh = đã quét xong (không phân biệt đúng/sai bằng màu)</p>
     <canvas id="procCanvas" style="display:none;"></canvas>
   </div>
 
   <div class="card">
     <h3 id="studentHeader">Học sinh (${answeredCount}/${rosterCount} đã trả lời)</h3>
-    <div class="row" id="studentChipsBox">
-      ${rosterEntries.map(([cid,name])=>{
-        const r = scan.responses[cid];
-        let cls = r ? 'answered' : '';
-        if(r && scan.graded) cls = (r.letter===scan.correct) ? 'correct' : 'wrong';
-        return `<div class="student-chip ${cls}">${r? (labels[r.letter]) + ' ' : ''}<span class="num">${cid}</span> ${escapeHtml(name)}</div>`;
-      }).join('')}
+    <div class="studentCols">
+      <div>
+        <div class="colTitle">⏳ Chưa quét (<span id="notScannedCount">${rosterCount-answeredCount}</span>)</div>
+        <div class="chipList" id="notScannedBox">${buildStudentChipsHtml(rosterEntries, scan, labels, false)}</div>
+      </div>
+      <div>
+        <div class="colTitle">✅ Đã quét (<span id="scannedCount">${answeredCount}</span>)</div>
+        <div class="chipList" id="scannedBox">${buildStudentChipsHtml(rosterEntries, scan, labels, true)}</div>
+      </div>
     </div>
   </div>
 
@@ -1226,19 +1248,22 @@ function updateScanProgressUI(){
   const studentHeader = document.getElementById('studentHeader');
   if(studentHeader) studentHeader.textContent = `Học sinh (${answeredCount}/${rosterCount} đã trả lời)`;
 
-  const chipsBox = document.getElementById('studentChipsBox');
-  if(chipsBox){
-    chipsBox.innerHTML = rosterEntries.map(([cid,name])=>{
-      const r = scan.responses[cid];
-      let cls = r ? 'answered' : '';
-      if(r && scan.graded) cls = (r.letter===scan.correct) ? 'correct' : 'wrong';
-      return `<div class="student-chip ${cls}">${r? (labels[r.letter]) + ' ' : ''}<span class="num">${cid}</span> ${escapeHtml(name)}</div>`;
-    }).join('');
-  }
+  // Học sinh "đã quét" chuyển ngay sang cột bên phải; "chưa quét" nằm ở cột bên trái.
+  const notScannedBox = document.getElementById('notScannedBox');
+  const scannedBox = document.getElementById('scannedBox');
+  if(notScannedBox) notScannedBox.innerHTML = buildStudentChipsHtml(rosterEntries, scan, labels, false);
+  if(scannedBox) scannedBox.innerHTML = buildStudentChipsHtml(rosterEntries, scan, labels, true);
+  const notScannedCountEl = document.getElementById('notScannedCount');
+  const scannedCountEl = document.getElementById('scannedCount');
+  if(notScannedCountEl) notScannedCountEl.textContent = rosterCount-answeredCount;
+  if(scannedCountEl) scannedCountEl.textContent = answeredCount;
 }
 function startCamera(){
   if(typeof jsQR === 'undefined'){ toast('❌ Thư viện quét mã chưa sẵn sàng. Hãy tải lại trang.'); return; }
-  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:state.settings.facingMode}}, audio:false})
+  cam.recentScans = [];
+  // Yêu cầu độ phân giải cao (Full HD nếu máy hỗ trợ) để mã QR ở xa vẫn đủ nét cho camera nhận diện —
+  // trình duyệt sẽ tự hạ xuống mức gần nhất nếu thiết bị không hỗ trợ "ideal".
+  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:state.settings.facingMode}, width:{ideal:1920}, height:{ideal:1080}}, audio:false})
     .then(stream=>{
       cam.stream = stream; cam.scanning = true; render();
       const v = document.getElementById('camVideo');
@@ -1256,6 +1281,7 @@ function stopCamera(){
 }
 function scanLoop(ts){
   if(!cam.scanning) return;
+  renderRecentScansBanner(); // chạy mỗi khung hình để tên học sinh tự mờ dần, không phụ thuộc nhịp quét mã
   if(ts - cam.lastScanTs > 160){
     cam.lastScanTs = ts;
     try{ doScanFrame(); }catch(e){ /* ignore */ }
@@ -1269,19 +1295,74 @@ function doScanFrame(){
   cvs.width = v.videoWidth; cvs.height = v.videoHeight;
   const ctx = cvs.getContext('2d', {willReadFrequently:true});
   ctx.drawImage(v,0,0,cvs.width,cvs.height);
+  const detections = []; // {data, location} theo toạ độ của TOÀN khung hình, dùng để vẽ khung nhận diện
   if(state.settings.multiMode){
     const cols=3, rows=3;
     const tw = Math.floor(cvs.width/cols), th = Math.floor(cvs.height/rows);
     for(let r=0;r<rows;r++) for(let cc=0;cc<cols;cc++){
       const img = ctx.getImageData(cc*tw, r*th, tw, th);
       const code = jsQR(img.data, tw, th);
-      if(code) handleCode(code);
+      if(code){
+        const ox=cc*tw, oy=r*th;
+        detections.push({data:code.data, location: offsetLocation(code.location, ox, oy)});
+        handleCode(code);
+      }
     }
   }else{
     const img = ctx.getImageData(0,0,cvs.width,cvs.height);
     const code = jsQR(img.data, img.width, img.height);
-    if(code) handleCode(code);
+    if(code){ detections.push({data:code.data, location:code.location}); handleCode(code); }
   }
+  renderCamOverlay(v, detections);
+}
+function offsetLocation(loc, ox, oy){
+  const shift = p=>({x:p.x+ox, y:p.y+oy});
+  return {
+    topLeftCorner: shift(loc.topLeftCorner),
+    topRightCorner: shift(loc.topRightCorner),
+    bottomRightCorner: shift(loc.bottomRightCorner),
+    bottomLeftCorner: shift(loc.bottomLeftCorner)
+  };
+}
+// Vẽ khung quanh mỗi mã QR đang thấy trong camera: ĐỎ = đang nhận diện (chưa ghi nhận xong),
+// XANH = thẻ này đã được quét (đã có trong scan.responses) — màu chỉ báo hiệu trạng thái quét,
+// KHÔNG dùng để phân biệt đáp án đúng/sai.
+function renderCamOverlay(video, detections){
+  const ocvs = document.getElementById('camOverlayCanvas');
+  if(!ocvs || !video.videoWidth) return;
+  const dispW = video.clientWidth || video.videoWidth;
+  const dispH = video.clientHeight || video.videoHeight;
+  if(ocvs.width !== dispW) ocvs.width = dispW;
+  if(ocvs.height !== dispH) ocvs.height = dispH;
+  const octx = ocvs.getContext('2d');
+  octx.clearRect(0,0,dispW,dispH);
+  if(!detections.length) return;
+  // video dùng object-fit:cover nên toạ độ gốc (videoWidth/videoHeight) cần quy đổi sang kích thước hiển thị
+  const scale = Math.max(dispW/video.videoWidth, dispH/video.videoHeight);
+  const offX = (dispW - video.videoWidth*scale)/2;
+  const offY = (dispH - video.videoHeight*scale)/2;
+  const mapPt = p=>({x:p.x*scale+offX, y:p.y*scale+offY});
+  detections.forEach(d=>{
+    const m = /^PLK-(\d+)$/.exec(d.data||'');
+    if(!m) return;
+    const cardId = m[1];
+    const already = !!(scan && scan.responses && scan.responses[cardId]);
+    const pts = [d.location.topLeftCorner, d.location.topRightCorner, d.location.bottomRightCorner, d.location.bottomLeftCorner].map(mapPt);
+    octx.beginPath();
+    pts.forEach((p,i)=> i===0 ? octx.moveTo(p.x,p.y) : octx.lineTo(p.x,p.y));
+    octx.closePath();
+    octx.lineWidth = 4;
+    octx.strokeStyle = already ? '#22c55e' : '#ef4444';
+    octx.stroke();
+  });
+}
+// Hiện tên học sinh vừa quét ngay trong khung camera (tự mờ dần sau vài giây).
+function renderRecentScansBanner(){
+  const box = document.getElementById('camRecentScans');
+  if(!box) return;
+  const now = Date.now();
+  cam.recentScans = (cam.recentScans||[]).filter(e=> now-e.ts < 4000);
+  box.innerHTML = cam.recentScans.map(e=>`<span class="nameTag">✅ ${escapeHtml(e.name)}</span>`).join('');
 }
 function handleCode(code){
   if(!scan) return;
@@ -1301,6 +1382,10 @@ function handleCode(code){
     const name = (c && c.roster[cardId]) || ('Thẻ #'+cardId);
     const lbl = scan.type==='mcq'? letter : (letter==='DUNG'?'Đúng':'Sai');
     toast(`✅ ${name}: ${lbl}`);
+    cam.recentScans = cam.recentScans || [];
+    cam.recentScans.unshift({name, ts: Date.now()});
+    cam.recentScans = cam.recentScans.slice(0,5);
+    renderRecentScansBanner();
   }
   if(currentView==='scan') updateScanProgressUI();
 }
