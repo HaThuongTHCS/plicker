@@ -1028,6 +1028,7 @@ view_render.scan = ()=>{
       ${!cam.scanning?`<div class="camOverlay">Nhấn "Mở camera" để bắt đầu quét thẻ học sinh</div>`:''}
     </div>
     <p class="small muted" style="margin-top:6px;">🟥 Khung đỏ = đang nhận diện thẻ &nbsp; 🟩 Khung xanh = đã quét xong (không phân biệt đúng/sai bằng màu)${state.settings.multiMode? ' &nbsp; ⬜ Lưới chấm = 9 "ô quét" — mỗi học sinh nên giơ thẻ lọt trong 1 ô để camera nhận chắc chắn hơn':''}</p>
+    <p id="scanDebugLine" class="small muted" style="margin-top:2px;font-family:monospace;opacity:0.8;">⏳ Đang khởi động camera...</p>
     <canvas id="procCanvas" style="display:none;"></canvas>
   </div>
 
@@ -1329,22 +1330,47 @@ function scanLoop(ts){
   renderRecentScansBanner(); // chạy mỗi khung hình để tên học sinh tự mờ dần, không phụ thuộc nhịp quét mã
   if(ts - cam.lastScanTs > 160){
     cam.lastScanTs = ts;
-    try{ doScanFrame(); }catch(e){ /* ignore */ }
+    try{ doScanFrame(); }catch(e){ setScanDebug('❌ Lỗi khi quét: '+(e&&e.message||e)); }
   }
   cam.rafId = requestAnimationFrame(scanLoop);
 }
 function doScanFrame(){
+  const t0 = performance.now();
   const v = document.getElementById('camVideo');
   const cvs = document.getElementById('procCanvas');
-  if(!v || !cvs || v.readyState !== v.HAVE_ENOUGH_DATA) return;
-  cvs.width = v.videoWidth; cvs.height = v.videoHeight;
+  if(!v || !cvs || v.readyState !== v.HAVE_ENOUGH_DATA || !v.videoWidth || !v.videoHeight){
+    setScanDebug('⏳ Đang chờ camera sẵn sàng...');
+    return;
+  }
+  // QUAN TRỌNG VỀ TỐC ĐỘ: camera điện thoại thường quay ở độ phân giải RẤT cao (1080p trở lên).
+  // Chạy jsQR (vừa quét toàn khung vừa quét từng ô nhỏ) trực tiếp trên ảnh độ phân giải gốc mỗi
+  // khung hình là CỰC NẶNG — có thể mất cả giây/khung trên máy yếu, khiến app như bị "đứng hình",
+  // quét chậm hay nhanh đều không kịp nhận diện. Nên LUÔN thu nhỏ ảnh về tối đa ~720px cạnh dài
+  // trước khi đưa vào jsQR — mã QR vẫn thừa rõ để đọc ở độ phân giải này, nhưng tốc độ xử lý nhanh
+  // hơn gấp nhiều lần (ảnh nhỏ hơn theo cả 2 chiều = số điểm ảnh phải xử lý giảm theo bình phương).
+  const MAX_DIM = 720;
+  const vw = v.videoWidth, vh = v.videoHeight;
+  const procScale = Math.min(1, MAX_DIM/Math.max(vw,vh));
+  const pw = Math.max(1, Math.round(vw*procScale)), ph = Math.max(1, Math.round(vh*procScale));
+  if(cvs.width !== pw) cvs.width = pw;
+  if(cvs.height !== ph) cvs.height = ph;
   const ctx = cvs.getContext('2d', {willReadFrequently:true});
-  ctx.drawImage(v,0,0,cvs.width,cvs.height);
-  const detections = []; // {data, location} theo toạ độ của TOÀN khung hình, dùng để vẽ khung nhận diện
+  ctx.drawImage(v,0,0,pw,ph);
+  const detections = []; // {data, location} theo toạ độ VIDEO GỐC (đã quy đổi ngược từ ảnh đã thu nhỏ)
   const seenThisFrame = new Set(); // chống vẽ khung trùng khi 1 mã được tìm thấy ở nhiều lượt quét khác nhau
+  let attempts = 0;
+  // code.location trả về theo toạ độ ẢNH ĐÃ THU NHỎ (pw x ph) — cần nhân ngược lại 1/procScale để ra
+  // đúng toạ độ trên video gốc, vì renderCamOverlay quy đổi vẽ dựa theo video.videoWidth/videoHeight.
+  const scaleLoc = (loc)=>{
+    const f = 1/procScale;
+    const s = p=>({x:p.x*f, y:p.y*f});
+    return { topLeftCorner:s(loc.topLeftCorner), topRightCorner:s(loc.topRightCorner), bottomRightCorner:s(loc.bottomRightCorner), bottomLeftCorner:s(loc.bottomLeftCorner) };
+  };
   const tryAdd = (code, ox, oy)=>{
+    attempts++;
     if(!code) return;
-    const loc = (ox||oy) ? offsetLocation(code.location, ox, oy) : code.location;
+    let loc = (ox||oy) ? offsetLocation(code.location, ox, oy) : code.location;
+    loc = scaleLoc(loc);
     if(!seenThisFrame.has(code.data)){
       seenThisFrame.add(code.data);
       detections.push({data:code.data, location:loc});
@@ -1356,7 +1382,7 @@ function doScanFrame(){
   // Luôn chạy lượt này trước — kể cả khi đang bật "Quét nhiều thẻ cùng lúc" — để không bao giờ bị
   // "khó quét hơn trước" so với lúc chỉ quét 1 thẻ.
   {
-    const img = ctx.getImageData(0,0,cvs.width,cvs.height);
+    const img = ctx.getImageData(0,0,pw,ph);
     tryAdd(jsQR(img.data, img.width, img.height, {inversionAttempts:'attemptBoth'}));
   }
   if(state.settings.multiMode){
@@ -1364,9 +1390,9 @@ function doScanFrame(){
     // khung hình phía trên bỏ lỡ vì chúng không phải là mã QR to/rõ nhất trong khung — không thay thế
     // lượt quét toàn khung ở trên.
     const cols=3, rows=3;
-    const tw = Math.floor(cvs.width/cols), th = Math.floor(cvs.height/rows);
+    const tw = Math.floor(pw/cols), th = Math.floor(ph/rows);
     const scanTile = (ox, oy, w, h)=>{
-      if(w<=0 || h<=0 || ox<0 || oy<0 || ox+w>cvs.width || oy+h>cvs.height) return;
+      if(w<=0 || h<=0 || ox<0 || oy<0 || ox+w>pw || oy+h>ph) return;
       const img = ctx.getImageData(ox, oy, w, h);
       tryAdd(jsQR(img.data, w, h, {inversionAttempts:'attemptBoth'}), ox, oy);
     };
@@ -1379,6 +1405,8 @@ function doScanFrame(){
     for(let r=0;r<2;r++) for(let cc=0;cc<2;cc++) scanTile(hw+cc*tw, hh+r*th, tw, th);
   }
   renderCamOverlay(v, detections);
+  const ms = Math.round(performance.now()-t0);
+  setScanDebug(`🟢 Đang quét • ${pw}×${ph}px • ${attempts} lượt thử/khung • ${ms}ms/khung${detections.length?(' • '+detections.length+' thẻ đang thấy'):''}`);
 }
 function offsetLocation(loc, ox, oy){
   const shift = p=>({x:p.x+ox, y:p.y+oy});
@@ -1473,6 +1501,13 @@ function renderCamOverlay(video, detections){
   });
 }
 // Hiện tên học sinh vừa quét ngay trong khung camera (tự mờ dần sau vài giây).
+// Dòng trạng thái nhỏ dưới camera: cho biết việc quét có đang thực sự chạy hay không, chạy nhanh/chậm
+// cỡ nào, và báo lỗi (nếu có) ngay tại chỗ thay vì âm thầm bỏ qua — để biết chắc camera có đang "sống"
+// hay không khi thấy không nhận diện được thẻ nào, thay vì đoán mò.
+function setScanDebug(msg){
+  const el = document.getElementById('scanDebugLine');
+  if(el) el.textContent = msg;
+}
 function renderRecentScansBanner(){
   const box = document.getElementById('camRecentScans');
   if(!box) return;
