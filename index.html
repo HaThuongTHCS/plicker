@@ -1341,29 +1341,42 @@ function doScanFrame(){
   const ctx = cvs.getContext('2d', {willReadFrequently:true});
   ctx.drawImage(v,0,0,cvs.width,cvs.height);
   const detections = []; // {data, location} theo toạ độ của TOÀN khung hình, dùng để vẽ khung nhận diện
+  const seenThisFrame = new Set(); // chống vẽ khung trùng khi 1 mã được tìm thấy ở nhiều lượt quét khác nhau
+  const tryAdd = (code, ox, oy)=>{
+    if(!code) return;
+    const loc = (ox||oy) ? offsetLocation(code.location, ox, oy) : code.location;
+    if(!seenThisFrame.has(code.data)){
+      seenThisFrame.add(code.data);
+      detections.push({data:code.data, location:loc});
+    }
+    handleCode(code); // handleCode tự chống trùng ghi nhận điểm (cooldown theo thời gian), gọi lại vô hại
+  };
+  // LƯỢT 0 — quét TOÀN BỘ khung hình (không chia ô): đây là cách quét chắc chắn nhất cho 1 thẻ to/ở
+  // gần/giơ nghiêng góc nào cũng được, vì mã QR không bị cắt ngang bởi đường chia ô như khi chia nhỏ.
+  // Luôn chạy lượt này trước — kể cả khi đang bật "Quét nhiều thẻ cùng lúc" — để không bao giờ bị
+  // "khó quét hơn trước" so với lúc chỉ quét 1 thẻ.
+  {
+    const img = ctx.getImageData(0,0,cvs.width,cvs.height);
+    tryAdd(jsQR(img.data, img.width, img.height, {inversionAttempts:'attemptBoth'}));
+  }
   if(state.settings.multiMode){
+    // Các lượt chia ô bên dưới chỉ để BẮT THÊM các thẻ khác (nhỏ hơn, ở góc khác) mà lượt quét toàn
+    // khung hình phía trên bỏ lỡ vì chúng không phải là mã QR to/rõ nhất trong khung — không thay thế
+    // lượt quét toàn khung ở trên.
     const cols=3, rows=3;
     const tw = Math.floor(cvs.width/cols), th = Math.floor(cvs.height/rows);
     const scanTile = (ox, oy, w, h)=>{
       if(w<=0 || h<=0 || ox<0 || oy<0 || ox+w>cvs.width || oy+h>cvs.height) return;
       const img = ctx.getImageData(ox, oy, w, h);
-      const code = jsQR(img.data, w, h);
-      if(code){
-        detections.push({data:code.data, location: offsetLocation(code.location, ox, oy)});
-        handleCode(code);
-      }
+      tryAdd(jsQR(img.data, w, h, {inversionAttempts:'attemptBoth'}), ox, oy);
     };
     // Lượt 1: lưới 3x3 (9 ô) — nhận diện được tối đa 1 mã QR mỗi ô.
     for(let r=0;r<rows;r++) for(let cc=0;cc<cols;cc++) scanTile(cc*tw, r*th, tw, th);
     // Lượt 2: lưới lệch nửa ô (2x2 = 4 ô) để "vá" các thẻ bị cắt ngang đường chia ô của lượt 1 —
     // nhờ vậy quét được nhiều thẻ cùng lúc (5 thẻ trở lên) chắc chắn hơn, kể cả khi các thẻ nằm
-    // sát mép ô lưới chính. Thẻ đã nhận ở lượt 1 sẽ tự bỏ qua ở đây (chống trùng trong handleCode).
+    // sát mép ô lưới chính. Thẻ đã nhận ở lượt trước sẽ tự bỏ qua ở đây (chống trùng ở trên).
     const hw = Math.floor(tw/2), hh = Math.floor(th/2);
     for(let r=0;r<2;r++) for(let cc=0;cc<2;cc++) scanTile(hw+cc*tw, hh+r*th, tw, th);
-  }else{
-    const img = ctx.getImageData(0,0,cvs.width,cvs.height);
-    const code = jsQR(img.data, img.width, img.height);
-    if(code){ detections.push({data:code.data, location:code.location}); handleCode(code); }
   }
   renderCamOverlay(v, detections);
 }
