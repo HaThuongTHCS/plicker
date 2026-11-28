@@ -1422,18 +1422,41 @@ function renderCamOverlay(video, detections){
   const offX = (dispW - video.videoWidth*scale)/2;
   const offY = (dispH - video.videoHeight*scale)/2;
   const mapPt = p=>({x:p.x*scale+offX, y:p.y*scale+offY});
+  const c = activeClass();
   detections.forEach(d=>{
     const m = /^PLK-(\d+)$/.exec(d.data||'');
     if(!m) return;
     const cardId = m[1];
     const already = !!(scan && scan.responses && scan.responses[cardId]);
     const pts = [d.location.topLeftCorner, d.location.topRightCorner, d.location.bottomRightCorner, d.location.bottomLeftCorner].map(mapPt);
+    const color = already ? '#22c55e' : '#ef4444';
     octx.beginPath();
     pts.forEach((p,i)=> i===0 ? octx.moveTo(p.x,p.y) : octx.lineTo(p.x,p.y));
     octx.closePath();
     octx.lineWidth = 4;
-    octx.strokeStyle = already ? '#22c55e' : '#ef4444';
+    octx.strokeStyle = color;
     octx.stroke();
+    // Hiện tên học sinh (hoặc "Thẻ #N" nếu chưa gán tên) NGAY TRÊN khung camera, dính liền phía trên
+    // thẻ vừa nhận diện — để biết ngay đang quét đúng em nào mà không cần nhìn sang danh sách bên cạnh.
+    const name = (c && c.roster[cardId]) || ('Thẻ #'+cardId);
+    const topMid = {
+      x: (pts[0].x+pts[1].x)/2,
+      y: Math.min(pts[0].y, pts[1].y)
+    };
+    octx.font = '600 15px sans-serif';
+    octx.textAlign = 'center';
+    octx.textBaseline = 'bottom';
+    const padX = 7, padY = 4, textW = octx.measureText(name).width;
+    const boxX = topMid.x - textW/2 - padX, boxY = topMid.y - 15 - padY*2, boxW = textW+padX*2, boxH = 15+padY*2;
+    octx.fillStyle = 'rgba(0,0,0,0.72)';
+    octx.beginPath();
+    if(octx.roundRect) octx.roundRect(boxX, boxY, boxW, boxH, 6); else octx.rect(boxX, boxY, boxW, boxH);
+    octx.fill();
+    octx.strokeStyle = color;
+    octx.lineWidth = 1.5;
+    octx.stroke();
+    octx.fillStyle = '#fff';
+    octx.fillText(name, topMid.x, boxY+boxH-padY);
   });
 }
 // Hiện tên học sinh vừa quét ngay trong khung camera (tự mờ dần sau vài giây).
