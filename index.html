@@ -1392,6 +1392,10 @@ function offsetLocation(loc, ox, oy){
 // Vẽ khung quanh mỗi mã QR đang thấy trong camera: ĐỎ = đang nhận diện (chưa ghi nhận xong),
 // XANH = thẻ này đã được quét (đã có trong scan.responses) — màu chỉ báo hiệu trạng thái quét,
 // KHÔNG dùng để phân biệt đáp án đúng/sai.
+const camLabelCache = {}; // cardId -> {pts, color, name, t} — nhớ tạm vị trí/tên thẻ vừa thấy, để
+                           // nhãn tên không bị chớp tắt theo từng khung hình (camera quét nhiều lần/giây,
+                           // có khung bắt được khung không, nếu vẽ đúng-theo-từng-khung sẽ bị nhấp nháy rất
+                           // khó nhìn thấy "ngay trong camera" như yêu cầu — nay giữ hiện thêm ~900ms).
 function renderCamOverlay(video, detections){
   const ocvs = document.getElementById('camOverlayCanvas');
   if(!ocvs || !video.videoWidth) return;
@@ -1416,20 +1420,30 @@ function renderCamOverlay(video, detections){
     }
     octx.restore();
   }
-  if(!detections.length) return;
   // video dùng object-fit:cover nên toạ độ gốc (videoWidth/videoHeight) cần quy đổi sang kích thước hiển thị
   const scale = Math.max(dispW/video.videoWidth, dispH/video.videoHeight);
   const offX = (dispW - video.videoWidth*scale)/2;
   const offY = (dispH - video.videoHeight*scale)/2;
   const mapPt = p=>({x:p.x*scale+offX, y:p.y*scale+offY});
   const c = activeClass();
+  const now = performance.now();
+  // Cập nhật cache với các thẻ VỪA thấy ở khung hình này (vị trí + tên + màu + thời điểm).
   detections.forEach(d=>{
     const m = /^PLK-(\d+)$/.exec(d.data||'');
     if(!m) return;
     const cardId = m[1];
     const already = !!(scan && scan.responses && scan.responses[cardId]);
     const pts = [d.location.topLeftCorner, d.location.topRightCorner, d.location.bottomRightCorner, d.location.bottomLeftCorner].map(mapPt);
-    const color = already ? '#22c55e' : '#ef4444';
+    const name = (c && c.roster[cardId]) || ('Thẻ #'+cardId);
+    camLabelCache[cardId] = { pts, color: already?'#22c55e':'#ef4444', name, t: now };
+  });
+  // Vẽ TẤT CẢ thẻ còn "mới" trong cache (kể cả không nằm trong detections khung hình này) — nhờ vậy
+  // khung + tên không bị chớp tắt liên tục giữa các khung hình, dễ nhìn thấy hơn khi giơ thẻ.
+  const CAM_LABEL_TTL = 900; // ms
+  Object.keys(camLabelCache).forEach(cardId=>{
+    const entry = camLabelCache[cardId];
+    if(now - entry.t > CAM_LABEL_TTL){ delete camLabelCache[cardId]; return; }
+    const {pts, color, name} = entry;
     octx.beginPath();
     pts.forEach((p,i)=> i===0 ? octx.moveTo(p.x,p.y) : octx.lineTo(p.x,p.y));
     octx.closePath();
@@ -1438,7 +1452,6 @@ function renderCamOverlay(video, detections){
     octx.stroke();
     // Hiện tên học sinh (hoặc "Thẻ #N" nếu chưa gán tên) NGAY TRÊN khung camera, dính liền phía trên
     // thẻ vừa nhận diện — để biết ngay đang quét đúng em nào mà không cần nhìn sang danh sách bên cạnh.
-    const name = (c && c.roster[cardId]) || ('Thẻ #'+cardId);
     const topMid = {
       x: (pts[0].x+pts[1].x)/2,
       y: Math.min(pts[0].y, pts[1].y)
